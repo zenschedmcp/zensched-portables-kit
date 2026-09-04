@@ -6,7 +6,7 @@ IDs and responses are illustrative. ZenSched IDs are integers.
 
 Shop: **Hill Country Portables**, Austin, Texas, Central time (`-05:00` in September). One construction account (two weekly toilets at the same site — place cache), one weekend dumpster, one driver, then invoice.
 
-Access notes (gate code, job-box combo) stay in SQLite. They are never sent to ZenSched.
+Access notes (gate code, job-box combo) and customer contact details stay in SQLite. They are never sent to ZenSched; locations and events are labelled by street address.
 
 ## Session start (every session)
 
@@ -110,7 +110,7 @@ Owner: *"yes"*
 
 ```
 location_create:
-  name: "Harbor Builders - Harbor job site"
+  name: "8800 FM 1826, Austin"
   street_address: "8800 FM 1826, Austin, TX 78737"
   checkin_radius_m: 75
   idempotency_key: "loc-unit-1"
@@ -118,12 +118,12 @@ location_create:
     billing: { meter: "geocode", units: 1, price: 0.03 }
 ```
 
-The gate code is **not** in `notes`. It lives only in `units.access_notes`. `checkin_radius_m` on the location is informational; the enforced radius is the policy.
+The gate code is **not** in `notes`, and "Harbor Builders" is **not** in `name`: the label is the street, the customer lives only in SQLite. `checkin_radius_m` on the location is informational; the enforced radius is the policy.
 
 ```
 event_create:
   location_id: 9201
-  title: "Portables - Harbor job site"
+  title: "Portables - 8800 FM 1826"
   start_date: "2026-09-07"
   end_date:   "2026-11-05"          ← start + 59 days (60-day cap)
   idempotency_key: "event-loc-9201-20260907"
@@ -173,7 +173,7 @@ sqlite_execute:
   → lastInsertRowid = 3
 
 location_create:
-  name: "Lake Fest - Lake Fest grounds"
+  name: "210 Lakeside Dr, Austin"
   street_address: "210 Lakeside Dr, Austin, TX 78746"
   checkin_radius_m: 75
   idempotency_key: "loc-unit-3"
@@ -181,7 +181,7 @@ location_create:
 
 event_create:
   location_id: 9202
-  title: "Portables - Lake Fest grounds"
+  title: "Portables - 210 Lakeside Dr"
   start_date: "2026-09-12"
   end_date:   "2026-11-10"
   idempotency_key: "event-loc-9202-20260912"
@@ -475,14 +475,20 @@ sqlite_execute: UPDATE invoices SET paid = 1, paid_date = date('now') WHERE invo
 
 ## Eight weeks later: "Schedule this week."
 
+US DST ended on Nov 1, so Central is now `-06:00`. The agent updates the stored offset **before** reading `units_due` (rule 8); otherwise the view would still emit `-05:00` and every shift would land an hour early.
+
 ```
+sqlite_execute: UPDATE settings SET value = '-06:00' WHERE key = 'timezone_offset';
+
 sqlite_query: SELECT * FROM units_due;
   → 2026-11-09 | Harbor T-14 | weekly | evt 8001 | event_valid_until 2026-11-05 | event_needs_roll 1 | loc 9201
+               | start_iso 2026-11-09T07:00:00-06:00 | end_iso 2026-11-09T07:15:00-06:00
     2026-11-09 | Harbor T-15 | weekly | evt 8001 | event_valid_until 2026-11-05 | event_needs_roll 1 | loc 9201
+               | start_iso 2026-11-09T07:15:00-06:00 | end_iso 2026-11-09T07:30:00-06:00
 
 event_create:
   location_id: 9201
-  title: "Portables - Harbor job site"
+  title: "Portables - 8800 FM 1826"
   start_date: "2026-11-09"
   end_date:   "2027-01-07"
   idempotency_key: "event-loc-9201-20261109"
@@ -498,14 +504,14 @@ shift_create: event_id 8101, worker_id 701, start "2026-11-09T07:15:00-06:00",
               end "2026-11-09T07:30:00-06:00", idempotency_key "shift-schedule-2-20261109"
 ```
 
-> Scheduled Harbor T-14 and T-15 for Mon Nov 9 7:00 and 7:15. Their ZenSched event was about to expire (Nov 5), so I renewed the **place** once through Jan 7 and copied it onto both toilets. Lake Fest has no next date (on-demand) so it is not on this week's list.
+> Scheduled Harbor T-14 and T-15 for Mon Nov 9 7:00 and 7:15 (Central standard time now that the clocks changed). Their ZenSched event was about to expire (Nov 5), so I renewed the **place** once through Jan 7 and copied it onto both toilets. Lake Fest has no next date (on-demand) so it is not on this week's list.
 
 ## Summary of who stored what
 
 | Thing | Where | Why |
 |---|---|---|
 | Harbor contact, Lake Fest one-off, prices, weekly cadence | SQLite | CRM; ZenSched does not model rates or recurrence |
-| Gate code, job-box combo | SQLite **only** | Privacy; never sent to ZenSched |
+| Gate code, job-box combo, customer contact names / phones / emails | SQLite **only** | Privacy; never sent to ZenSched (locations are labelled by street) |
 | Each **place's** GPS location (shared by T-14 and T-15) | ZenSched (integer ID on both `units` rows) | Needed for geofenced check-in; geocoded once |
 | Each place's current ≤60-day event and its end date | ZenSched (integer ID + `event_valid_until` on every unit at the place) | Shifts hang off events; renewed by the agent once per location |
 | The Service Proof form | ZenSched (ID in `settings`) | Installed on the driver's phone per shift |
